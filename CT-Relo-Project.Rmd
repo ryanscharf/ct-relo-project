@@ -27,6 +27,8 @@ library(geosphere)
 library(tmap)
 library(tigris)
 library(furrr)
+library(tidycensus)
+library(parallel)
 ```
 
 ## Background
@@ -35,7 +37,7 @@ Document to reproduce metrics and visualizations used in this article: http://ww
 
 First order is to load disperate data files (including shape files for maps)...
 
-```{r load_data}
+```{r load_data, message=FALSE, warning=FALSE}
 acs_yr <- 2021
 acs_survey <- 'acs1'
 
@@ -91,56 +93,83 @@ You can also embed plots, for example:
   #   dimnames = list(c('x','y'),c('min','max'))
   #   )
   # location <- coords %>% opq()
-  
-  location <- purrr::map(counties$geometry, ~opq(bbox = st_bbox(.x)))
-  
+    
   # # get trail node data
   # temp_data <- location %>%
   #   add_osm_feature(key = "highway",
   #                   value = c("footway", "cycleway")) %>%
   #   osmdata_sf()
 
-  path_count_fn <- function(x) {
-    df <- x %>%
-      #pluck(1) %>%
-      add_osm_feature(key = "highway",
-                      value = c("footway", "cycleway")) %>%
-      osmdata_sf()
-    
-    temp_node_count <- nrow(df$osm_points)
-    return(c(nodes = temp_node_count))
-  }
 
-  definitely_get_data = function(func, n_tries = 6, sleep = 1, ...){
-    #https://www.brodrigues.co/blog/2018-03-12-keep_trying/
+definitely_get_data = function(func,
+                               n_tries = 6,
+                               sleep = 1,
+                               ...) {
+  #https://www.brodrigues.co/blog/2018-03-12-keep_trying/
   possibly_func = purrr::possibly(func, otherwise = NULL)
-
+  
   result = NULL
   try_number = 1
-
-  while(is.null(result) && try_number <= n_tries){
+  
+  while (is.null(result) && try_number <= n_tries) {
     print(paste("Try number: ", try_number))
     try_number = try_number + 1
     result = possibly_func(...)
     Sys.sleep(sleep)
   }
-
+  
   return(result)
 }
 
-  
-    plan(multisession, workers = 12)
-  
-  osm_results <- furrr::future_map(location, 
-                                   .f = ~definitely_get_data(path_count_fn(.x))) %>%
-    bind_rows()
-  
-  osm_results_j <- counties %>% 
-    st_drop_geometry() %>% 
-    select(GEOID) %>%
-    bind_cols(osm_results)
 
-   osm_results_j %>% write_csv('county_node_count.csv')
+path_count_fn <- function(x) {
+  df <- x %>%
+    #pluck(1) %>%
+    add_osm_feature(key = "highway",
+                    value = c("footway", "cycleway")) %>%
+    osmdata_sf()
+  
+  temp_node_count <- nrow(df$osm_points)
+  return(temp_node_count)
+}
+
+possib_path <- possibly(.f = path_count_fn)
+
+
+nodes_df <- data.frame(GEOID = NULL, nodes = NULL)
+
+for( i in 1:nrow(counties)){
+   cat(paste0(i,'\n'))
+  
+  go <- st_drop_geometry(counties[i, 'GEOID'])
+  x <- opq(bbox = st_bbox(counties[i, ]))
+  
+  df <- possib_path(x)
+    
+  res = data.frame(GEOID = go, nodes = df)
+  
+  nodes_df <- bind_rows(nodes_df, res)
+  
+}
+
+
+
+# location <- purrr::map(counties$geometry, ~ opq(bbox = st_bbox(.x)))
+
+
+#  ncores <- parallel::detectCores() - 2
+#   plan(multisession, workers = ncores)
+#   
+#   osm_results <- furrr::future_map(location, 
+#                                    .f = ~definitely_get_data(path_count_fn(.x)), .progress = T) %>%
+#     bind_rows()
+#   
+#   osm_results_j <- counties %>% 
+#     st_drop_geometry() %>% 
+#     select(GEOID) %>%
+#     bind_cols(osm_results)
+
+  nodes_df %>% write_csv('county_node_count.csv')
   beepr::beep(2)
    
   # 
