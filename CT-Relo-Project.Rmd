@@ -26,9 +26,13 @@ library(rgdal)
 library(geosphere)
 library(tmap)
 library(tigris)
-library(furrr)
+#library(furrr)
 library(tidycensus)
-library(parallel)
+#library(parallel)
+library(rvest)
+library(httr)
+library(polite)
+library(janitor)
 ```
 
 ## Background
@@ -101,27 +105,6 @@ You can also embed plots, for example:
   #   osmdata_sf()
 
 
-definitely_get_data = function(func,
-                               n_tries = 6,
-                               sleep = 1,
-                               ...) {
-  #https://www.brodrigues.co/blog/2018-03-12-keep_trying/
-  possibly_func = purrr::possibly(func, otherwise = NULL)
-  
-  result = NULL
-  try_number = 1
-  
-  while (is.null(result) && try_number <= n_tries) {
-    print(paste("Try number: ", try_number))
-    try_number = try_number + 1
-    result = possibly_func(...)
-    Sys.sleep(sleep)
-  }
-  
-  return(result)
-}
-
-
 path_count_fn <- function(x) {
   df <- x %>%
     #pluck(1) %>%
@@ -153,10 +136,12 @@ for( i in 1:nrow(counties)){
 }
 
 
-
+# this map technique is definitely not working for me.
+# I think the osm endpoint doesn't like getting a ton of 
+# simultaneous requests from the same ip
+# 
 # location <- purrr::map(counties$geometry, ~ opq(bbox = st_bbox(.x)))
-
-
+# 
 #  ncores <- parallel::detectCores() - 2
 #   plan(multisession, workers = ncores)
 #   
@@ -169,22 +154,16 @@ for( i in 1:nrow(counties)){
 #     select(GEOID) %>%
 #     bind_cols(osm_results)
 
-  nodes_df %>% write_csv('county_node_count.csv')
-  beepr::beep(2)
+  # nodes_df %>% write_csv('county_node_count.csv')
+  # beepr::beep(2)
    
-  # 
-  # # count path node count & create dataframe
-  # temp_node_count <- nrow(temp_data$osm_points)
-  # temp_df <- data.frame(town=towns[i], path_node_count=temp_node_count)
-
-  # agg datasets
-  trail_df <- cbind(counties, osm_results)
-
- # }
+  nodes_df <- read_csv('county_node_count.csv')
+  
+  trail_df <- counties %>% left_join(nodes_df, by = 'GEOID')
 
  print(head(trail_df))
 
-trail_df <- read.csv("osm_path_node_count.csv")
+# trail_df <- read.csv("osm_path_node_count.csv")
 
 ```
 
@@ -192,24 +171,96 @@ trail_df <- read.csv("osm_path_node_count.csv")
 
 ```{r airports}
 
-# lat/lon major airports around CT
-lga <- c(-73.8740, 40.7769)
-jfk <- c(-73.7781, 40.6413)
-bdl <- c(-72.6860, 41.9389)
-pvd <- c(-71.4270, 41.7235)
-bos <- c(-71.0096, 42.3656)
+# airport_file <- "https://www.partow.net/downloads/GlobalAirportDatabase.zip"
+# zp_f <- tempfile(fileext = '.zip')
+# download.file(airport_file, zp_f, mode = 'wb')
+# 
+# airports <- read_delim(
+#   zp_f,
+#   delim = ":",
+#   escape_double = FALSE,
+#   col_names = FALSE,
+#   col_types = cols(
+#     X6 = col_skip(),
+#     X7 = col_skip(),
+#     X8 = col_skip(),
+#     X9 = col_skip(),
+#     X10 = col_skip(),
+#     X11 = col_skip(),
+#     X12 = col_skip(),
+#     X13 = col_skip(),
+#     X14 = col_integer()
+#   ),
+#   trim_ws = TRUE
+# )
 
-# lat/lon needs to be numeric
-my_spdf@data$INTPTLAT00 <- as.numeric(my_spdf@data$INTPTLAT00)
-my_spdf@data$INTPTLON00 <- as.numeric(my_spdf@data$INTPTLON00)
+# names(airports) <- c(
+#   'ICAO',
+#   'IATA',
+#   'name',
+#   'city',
+#   'country',
+#   'altitude',
+#   'latitude',
+#   'longitude'
+# )
 
-# for each town (i.e. row of data), use the lowest distance to any airport
-my_spdf@data$dist_lga <- distHaversine(as.matrix(my_spdf@data[,c("INTPTLON00", "INTPTLAT00")]), lga) * 0.000621371
-my_spdf@data$dist_jfk <- distHaversine(as.matrix(my_spdf@data[,c("INTPTLON00", "INTPTLAT00")]), jfk) * 0.000621371
-my_spdf@data$dist_bdl <- distHaversine(as.matrix(my_spdf@data[,c("INTPTLON00", "INTPTLAT00")]), bdl) * 0.000621371
-my_spdf@data$dist_pvd <- distHaversine(as.matrix(my_spdf@data[,c("INTPTLON00", "INTPTLAT00")]), pvd) * 0.000621371
-my_spdf@data$dist_bos <- distHaversine(as.matrix(my_spdf@data[,c("INTPTLON00", "INTPTLAT00")]), bos) * 0.000621371
-my_spdf@data$dist_to_airport <- apply(my_spdf@data[,c("dist_lga", "dist_jfk", "dist_bdl", "dist_pvd", "dist_bos")], 1, FUN = min)
+airports <- read_csv("https://raw.githubusercontent.com/lxndrblz/Airports/main/airports.csv", 
+    col_types = cols(time_zone_id = col_skip(), 
+        url = col_skip())) %>% 
+  rename(geometry = location) %>% 
+  st_as_sf(wkt = 'geometry', crs = 4269)
+  
+
+airports <- airports %>% 
+  filter(country_id == 'US',
+         # latitude != 0, 
+         # longitude != 0,
+         !str_detect(name, 'AFB|AAF'),
+         !is.na(icao))
+
+# there's way too mainy nonpassenger/primary airports in the first list
+# we will grab the wikipedia list of airpots, which looks reasonable 
+# and use that to filter the geocoded list
+# 
+# https://ivelasq.rbind.io/blog/politely-scraping/
+
+wiki_url <- 'https://en.wikipedia.org/wiki/List_of_airports_in_the_United_States'
+url_bow <- polite::bow(wiki_url)
+
+wiki_html <- polite::scrape(url_bow) %>%
+  html_nodes('table.wikitable') %>%
+  html_table(fill = T)
+
+wiki_tbl <- wiki_html[[1]] %>% 
+  janitor::clean_names() %>% 
+  filter(faa != '')
+
+
+airports <- airports %>% 
+  filter(icao %in% wiki_tbl$icao)
+
+
+distances <- st_distance(counties, airports)
+ 
+# # lat/lon major airports around CT
+# lga <- c(-73.8740, 40.7769)
+# jfk <- c(-73.7781, 40.6413)
+# bdl <- c(-72.6860, 41.9389)
+# pvd <- c(-71.4270, 41.7235)
+# bos <- c(-71.0096, 42.3656)
+# 
+# # lat/lon needs to be numeric
+# my_spdf@data$INTPTLAT00 <- as.numeric(my_spdf@data$INTPTLAT00)
+# my_spdf@data$INTPTLON00 <- as.numeric(my_spdf@data$INTPTLON00)
+
+# # for each town (i.e. row of data), use the lowest distance to any airport
+# my_spdf@data$dist_lga <- distHaversine(as.matrix(my_spdf@data[,c("INTPTLON00", "INTPTLAT00")]), lga) * 0.000621371
+# my_spdf@data$dist_jfk <- distHaversine(as.matrix(my_spdf@data[,c("INTPTLON00", "INTPTLAT00")]), jfk) * 0.000621371
+# my_spdf@data$dist_bdl <- distHaversine(as.matrix(my_spdf@data[,c("INTPTLON00", "INTPTLAT00")]), bdl) * 0.000621371
+# my_spdf@data$dist_pvd <- distHaversine(as.matrix(my_spdf@data[,c("INTPTLON00", "INTPTLAT00")]), pvd) * 0.000621371
+# my_spdf@data$dist_bos <- distHaversine(as.matrix(my_spdf@data[,c("INTPTLON00", "INTPTLAT00")]), bos) * 0.000621371
+# my_spdf@data$dist_to_airport <- apply(my_spdf@data[,c("dist_lga", "dist_jfk", "dist_bdl", "dist_pvd", "dist_bos")], 1, FUN = min)
 
 ```
 
