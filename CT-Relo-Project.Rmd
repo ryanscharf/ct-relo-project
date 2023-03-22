@@ -21,11 +21,12 @@ knitr::opts_chunk$set(echo = TRUE)
 library(tidyverse)
 library(osmdata)
 library(sf)
-library(ggmap)
+# library(ggmap)
 library(rgdal)
 library(geosphere)
-library(ggplot2)
-
+library(tmap)
+library(tigris)
+library(furrr)
 ```
 
 ## Background
@@ -35,27 +36,23 @@ Document to reproduce metrics and visualizations used in this article: http://ww
 First order is to load disperate data files (including shape files for maps)...
 
 ```{r load_data}
+acs_yr <- 2021
+acs_survey <- 'acs1'
 
-# school data
-# https://edsight.ct.gov/SASStoredProcess/guest?_program=%2FCTDOE%2FEdSight%2FRelease%2FReporting%2FPublic%2FReports%2FStoredProcesses%2FNGAReport&_district=State%20of%20Connecticut&_select=Submit&_year=2018-19&_school=
-# house prices data
-# 
-# https://portal.ct.gov/OPM/IGPP/Publications/Mill-Rates
-# this file actually includes additional data points:
-school_data <- read.csv("CT-school-and-other.csv")
-print(head(school_data))
+median_home_value_co <-
+  get_acs(
+    geography = 'county',
+    variables = c('B25077_001'),
+    year = acs_yr,
+    survey = acs_survey
+  )
 
-# path to shape file
-# https://magic.lib.uconn.edu/connecticut_data.html
-path_to_shape <- "/WGS84/townct_37800_0000_2000_s100_census_1_shp_wgs84.shp"
+#filter states to contiguous US
+states <- tigris::states(cb = T ) %>% 
+  filter(!STATEFP %in% c('02', '15', '60', '66', '69', '72', '78'))
 
-# load shape file data
-my_spdf <- readOGR( 
-  dsn= paste0(getwd(), path_to_shape),
-  verbose=FALSE
-)
+counties <- tigris::counties(state = states$STATEFP, cb = T)
 
-plot(my_spdf)
 
 ```
 
@@ -69,39 +66,94 @@ You can also embed plots, for example:
 ##  no need to do the loop again unless you want to update the data or search for different tags (like beaches)
 
 ## subset towns and locatins to pull osm data for...
-# data_for_osm <- my_spdf@data %>% filter(NAME00 != "County subdivisions not defined") %>% select(NAME00, INTPTLAT00, INTPTLON00)
+# data_for_osm <- counties %>% select(STATEFP, GEOID) # %>% st_centroid()
 
 ## instead of writing the long form several times below
-# towns <- data_for_osm@data$NAME00
-# lats <- data_for_osm$INTPTLAT00
-# lons <- data_for_osm$INTPTLON00
+ # towns <- data_for_osm@data$NAME00
+ # lats <- data_for_osm$INTPTLAT00
+ # lons <- data_for_osm$INTPTLON00
 
 ## create an empty dataframe
-# trail_df <- data.frame(town=NULL, path_node_count=NULL)
+ # trail_df <- data.frame(county=NULL, path_node_count=NULL)
 
 ## loop through towns and use osm API to get nodes tagged as footway or cycleway
-# for (i in 1:length(towns)) {
-#
-#   # set coords & location: from each town center, search ~10 mile radius..
-#   coords <- matrix(c(lons[i] - 0., lons[i] + 0.16, lats[i] - 0.16, lats[i] + 0.16), byrow = TRUE, nrow = 2, ncol = 2, dimnames = list(c('x','y'),c('min','max')))
-#   location <- coords %>% opq()
-#
-#   # get trail node data
-#   temp_data <- location %>%
-#     add_osm_feature(key = "highway",
-#                     value = c("footway", "cycleway")) %>%
-#     osmdata_sf()
-#
-#   # count path node count & create dataframe
-#   temp_node_count <- nrow(temp_data$osm_points)
-#   temp_df <- data.frame(town=towns[i], path_node_count=temp_node_count)
-#
-#   # agg datasets
-#   trail_df <- rbind(trail_df, temp_df)
-#
-# }
+ # for (i in 1:length(towns)) {
 
-# print(head(trail_df))
+  # # set coords & location: from each town center, search ~10 mile radius..
+  # coords <- matrix(
+  #   c(lons[i] - 0., 
+  #     lons[i] + 0.16, 
+  #     lats[i] - 0.16, 
+  #     lats[i] + 0.16), 
+  #   byrow = TRUE, 
+  #   nrow = 2, 
+  #   ncol = 2, 
+  #   dimnames = list(c('x','y'),c('min','max'))
+  #   )
+  # location <- coords %>% opq()
+  
+  location <- purrr::map(counties$geometry, ~opq(bbox = st_bbox(.x)))
+  
+  # # get trail node data
+  # temp_data <- location %>%
+  #   add_osm_feature(key = "highway",
+  #                   value = c("footway", "cycleway")) %>%
+  #   osmdata_sf()
+
+  path_count_fn <- function(x) {
+    df <- x %>%
+      #pluck(1) %>%
+      add_osm_feature(key = "highway",
+                      value = c("footway", "cycleway")) %>%
+      osmdata_sf()
+    
+    temp_node_count <- nrow(df$osm_points)
+    return(c(nodes = temp_node_count))
+  }
+
+  definitely_get_data = function(func, n_tries = 6, sleep = 1, ...){
+    #https://www.brodrigues.co/blog/2018-03-12-keep_trying/
+  possibly_func = purrr::possibly(func, otherwise = NULL)
+
+  result = NULL
+  try_number = 1
+
+  while(is.null(result) && try_number <= n_tries){
+    print(paste("Try number: ", try_number))
+    try_number = try_number + 1
+    result = possibly_func(...)
+    Sys.sleep(sleep)
+  }
+
+  return(result)
+}
+
+  
+    plan(multisession, workers = 12)
+  
+  osm_results <- furrr::future_map(location, 
+                                   .f = ~definitely_get_data(path_count_fn(.x))) %>%
+    bind_rows()
+  
+  osm_results_j <- counties %>% 
+    st_drop_geometry() %>% 
+    select(GEOID) %>%
+    bind_cols(osm_results)
+
+   osm_results_j %>% write_csv('county_node_count.csv')
+  beepr::beep(2)
+   
+  # 
+  # # count path node count & create dataframe
+  # temp_node_count <- nrow(temp_data$osm_points)
+  # temp_df <- data.frame(town=towns[i], path_node_count=temp_node_count)
+
+  # agg datasets
+  trail_df <- cbind(counties, osm_results)
+
+ # }
+
+ print(head(trail_df))
 
 trail_df <- read.csv("osm_path_node_count.csv")
 
@@ -253,31 +305,7 @@ ggmap(mad_map)+
 
 ```
 
-## School Outcomes
 
-``` {r school-outcomes,  fig.width = 10, fig.asp = .52}
-
-# create dataset for map visualization
-World2 <- fortify(my_spdf)
-World2_join = plyr::join(x = World2, y = my_spdf@data, by="id") # join by id
-World2_join <- World2_join %>% filter(NAME00 != "County subdivisions not defined")
-World2_join$cost_bucket <- cut(World2_join$school_outcomes, 5)
-
-ggplot() + 
-  geom_polygon(data = World2_join, aes(x = long, y = lat, group = group, fill = cost_bucket), # fill by OCCURENCE
-               colour = "black", size = 0.5) +
-  scale_color_manual(values = col_list, labels = labels_list) +
-  scale_fill_manual(values = col_list, labels = labels_list) +
-  geom_text(data=my_spdf@data %>% filter(NAME00 != "County subdivisions not defined"), aes(INTPTLON00, INTPTLAT00, label = NAME00), size=2.5) +
-  labs(fill="School Outcome Ranges") +
-  annotate("label", x = -72.25, y = 41, size = 7, label = expression(atop("CT School Outcome by Town", "(~2020 from CT EdSight data)"))) +
-  annotate("text", x = -72.70, y = 41.18, label = "Long Island Sound") +
-  theme(panel.background = element_blank(),
-      axis.title=element_blank(),
-      axis.text=element_blank(),
-      axis.ticks=element_blank())
-
-```
 
 ## Proximity to Airport
 
