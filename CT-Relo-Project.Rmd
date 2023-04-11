@@ -22,8 +22,8 @@ library(tidyverse)
 library(osmdata)
 library(sf)
 # library(ggmap)
-library(rgdal)
-library(geosphere)
+# library(rgdal)
+# library(geosphere)
 library(tmap)
 library(tigris)
 #library(furrr)
@@ -33,6 +33,7 @@ library(rvest)
 library(httr)
 library(polite)
 library(janitor)
+library(units)
 ```
 
 ## Background
@@ -118,22 +119,22 @@ path_count_fn <- function(x) {
 
 possib_path <- possibly(.f = path_count_fn)
 
-
-nodes_df <- data.frame(GEOID = NULL, nodes = NULL)
-
-for( i in 1:nrow(counties)){
-   cat(paste0(i,'\n'))
-  
-  go <- st_drop_geometry(counties[i, 'GEOID'])
-  x <- opq(bbox = st_bbox(counties[i, ]))
-  
-  df <- possib_path(x)
-    
-  res = data.frame(GEOID = go, nodes = df)
-  
-  nodes_df <- bind_rows(nodes_df, res)
-  
-}
+ # working loop to get the osm data
+# nodes_df <- data.frame(GEOID = NULL, nodes = NULL)
+# 
+# for( i in 1:nrow(counties)){
+#    cat(paste0(i,'\n'))
+#   
+#   go <- st_drop_geometry(counties[i, 'GEOID'])
+#   x <- opq(bbox = st_bbox(counties[i, ]))
+#   
+#   df <- possib_path(x)
+#     
+#   res = data.frame(GEOID = go, nodes = df)
+#   
+#   nodes_df <- bind_rows(nodes_df, res)
+#   
+# }
 
 
 # this map technique is definitely not working for me.
@@ -161,7 +162,7 @@ for( i in 1:nrow(counties)){
   
   trail_df <- counties %>% left_join(nodes_df, by = 'GEOID')
 
- print(head(trail_df))
+ # print(head(trail_df))
 
 # trail_df <- read.csv("osm_path_node_count.csv")
 
@@ -242,7 +243,15 @@ airports <- airports %>%
 
 
 distances <- st_distance(counties, airports)
- 
+
+#find minimum distance to airport 
+min_dist <- do.call(pmin, as.data.frame(distances))
+
+trail_df <- trail_df %>% 
+  mutate(
+    min_dist_airport = set_units(min_dist, 'miles')
+    )
+
 # # lat/lon major airports around CT
 # lga <- c(-73.8740, 40.7769)
 # jfk <- c(-73.7781, 40.6413)
@@ -263,6 +272,71 @@ distances <- st_distance(counties, airports)
 # my_spdf@data$dist_to_airport <- apply(my_spdf@data[,c("dist_lga", "dist_jfk", "dist_bdl", "dist_pvd", "dist_bos")], 1, FUN = min)
 
 ```
+
+
+```{r hunt down disc golf courses} 
+centroid_latlon <- function(x){
+  df <- x %>% st_centroid() %>% st_coordinates()
+  c(df[2], df[1])
+}
+
+pdga_url <- "https://www.pdga.com/course-directory/advanced?title=&field_course_location_country=US&field_course_location_locality=&field_course_location_administrative_area=All&field_course_location_postal_code=&field_course_type_value=All&rating_value=All&field_course_holes_value=All&field_course_total_length_value=All&field_course_target_type_value=All&field_course_tee_type_value=All&field_location_type_value=All&field_course_camping_value=All&field_course_facilities_value=All&field_course_fees_value=All&field_course_handicap_value=All&field_course_private_value=All&field_course_signage_value=All&field_cart_friendly_value=All&page={page}"
+pdga_base <- 'https://www.pdga.com'
+
+pdga_pages <- 151
+page <- seq(0, pdga_pages, 1) 
+
+# test_page <- "https://www.pdga.com/course-directory/advanced?title=&field_course_location_country=US&field_course_location_locality=&field_course_location_administrative_area=All&field_course_location_postal_code=&field_course_type_value=All&rating_value=All&field_course_holes_value=All&field_course_total_length_value=All&field_course_target_type_value=All&field_course_tee_type_value=All&field_location_type_value=All&field_course_camping_value=All&field_course_facilities_value=All&field_course_fees_value=All&field_course_handicap_value=All&field_course_private_value=All&field_course_signage_value=All&field_cart_friendly_value=All&page=1"
+
+get_courses <- function(p_url, pdga_base = 'https://www.pdga.com'){
+  
+  url_bow <- polite::bow(p_url)
+  url_scrap <- url_bow %>% 
+    polite::scrape()
+  
+  nams <- url_scrap %>%
+    html_nodes('.views-field-title') %>% 
+    html_text2()
+  
+  nams <- nams[2:51]
+  
+  links <- url_scrap %>% html_nodes('a') %>% html_attr('href')
+  links <- links[121:170]
+  links_p <- paste0(pdga_base, links)
+
+data.frame(course = nams, 
+           link = links_p)
+}
+
+get_coords <- function(link){
+  
+  url_bow <- polite::bow(link)
+  
+  c <- url_bow %>% polite::scrape() %>% html_nodes('a') %>% html_attr('href')
+  c <- c[str_detect(c, 'maps') & !is.na(c)][2]
+  c <- str_extract(c, '(?<=q=).*') %>% str_split(',')
+  c_lat <- c[[1]][1] %>% as.numeric()
+  c_lon <- c[[1]][2] %>% as.numeric()
+  
+  data.frame(link = l1,
+             latitude = c_lat,
+             longitude = c_lon)
+}
+
+#takes 25 minutes
+courses <- map_df(glue(pdga_url), get_courses)
+courses %>% write_csv('courses.csv')
+
+#will take 5 days
+course_geo <- map_df(courses$link, get_coords, .progress = T)
+saveRDS(course_geo, 'course_geo.rds')
+
+coureses %>% left_join(course_geo) %>% write_csv('courses_geo.csv')
+```
+
+
+
+
 
 ## Distributions
 
