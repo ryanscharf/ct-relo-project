@@ -56,9 +56,11 @@ median_home_value_co <-
 
 #filter states to contiguous US
 states <- tigris::states(cb = T ) %>% 
-  filter(!STATEFP %in% c('02', '15', '60', '66', '69', '72', '78'))
+  filter(!STATEFP %in% c('02', '15', '60', '66', '69', '72', '78')) %>% 
+  st_transform(4326)
 
-counties <- tigris::counties(state = states$STATEFP, cb = T)
+counties <- tigris::counties(state = states$STATEFP, cb = T)%>% 
+  st_transform(4326)
 
 
 ```
@@ -67,7 +69,7 @@ counties <- tigris::counties(state = states$STATEFP, cb = T)
 
 You can also embed plots, for example:
 
-```{r get_trails_data}
+```{r get_trails_data, message=FALSE, warning=FALSE}
 
 path_count_fn <- function(x) {
   df <- x %>%
@@ -121,7 +123,7 @@ possib_path <- possibly(.f = path_count_fn)
   # nodes_df %>% write_csv('county_node_count.csv')
   # beepr::beep(2)
    
-  nodes_df <- read_csv('county_node_count.csv')
+  nodes_df <- read_csv(paste0(here::here(), '/data/county_node_count.csv'))
   
   trail_df <- counties %>% left_join(nodes_df, by = 'GEOID')
 
@@ -133,13 +135,13 @@ possib_path <- possibly(.f = path_count_fn)
 
 ## Getting Distance to Airport Data
 
-```{r airports}
+```{r airports, message=FALSE, warning=FALSE}
 
 airports <- read_csv("https://raw.githubusercontent.com/lxndrblz/Airports/main/airports.csv", 
     col_types = cols(time_zone_id = col_skip(), 
         url = col_skip())) %>% 
   rename(geometry = location) %>% 
-  st_as_sf(wkt = 'geometry', crs = 4269)
+  st_as_sf(wkt = 'geometry', crs = 4326)
   
 
 airports <- airports %>% 
@@ -175,19 +177,34 @@ distances <- st_distance(counties, airports)
 
 #find minimum distance to airport 
 min_dist <- do.call(pmin, as.data.frame(distances))
+max_dist <- do.call(pmax, as.data.frame(distances))
+
 
 trail_df <- trail_df %>% 
   mutate(
-    min_dist_airport = set_units(min_dist, 'miles')
+    min_dist_airport = set_units(min_dist, 'miles'),
+    max_dist_airport = set_units(max_dist, 'miles')
     )
 
 
 ```
 
+```{r hazard}
+# from https://hazards.fema.gov/nri/data-resources
+# RESL community resilience
+# SOVI social vulnerability 
+# EAL expected annual loss
+# https://www.ncei.noaa.gov/access/billions/mapping
+
+hazard <- read_csv(paste0(here::here(), '/data/NRI_Table_Counties.csv')) %>% 
+  filter(STCOFIPS %in% counties$GEOID)
+
+
+```
 
 ## Scrape Disc Golf Courses
 
-```{r hunt down disc golf courses} 
+```{r hunt down disc golf courses, message=FALSE, warning=FALSE} 
 # centroid_latlon <- function(x){
 #   df <- x %>% st_centroid() %>% st_coordinates()
 #   c(df[2], df[1])
@@ -245,45 +262,72 @@ get_coords <- function(link, sleep = 3){
 # #takes 25 minutes
 # courses <- map_df(glue(pdga_url), get_courses)
 # courses %>% filter(!is.na(course)) %>% write_csv('courses.csv')
-courses <- read_csv('courses.csv') %>% filter(!is.na(course))
+courses <- read_csv(paste0(here::here(), '/data/courses.csv')) %>% filter(!is.na(course))
 
 
-course_geo <- data.frame()
-
-for(i in 1:length(courses$link)){
-
-  link <- courses$link[i]
-  cat(paste0('\n', link))
-  
-  #url_bow <- polite::bow(link)
-  
-  #c <- url_bow %>% polite::scrape() %>% html_nodes('a') %>% html_attr('href')
-  c <- link %>% read_html() %>% html_nodes('a') %>% html_attr('href')
-  c <- c[str_detect(c, 'maps') & !is.na(c)][2]
-  c <- str_extract(c, '(?<=q=).*') %>% str_split(',')
-  c_lat <- c[[1]][1] %>% as.numeric()
-  c_lon <- c[[1]][2] %>% as.numeric()
-  
-  gc()
-  
-  df <- data.frame(link = link,
-             latitude = c_lat,
-             longitude = c_lon) 
-
-  course_geo <- course_geo %>% bind_rows(df)
-  saveRDS(course_geo, 'course_geo.rds')
-
-      
-  Sys.sleep(1)
-  
-}
+# course_geo <- data.frame()
+# 
+# for(i in 1:length(courses$link)){
+# 
+#   link <- courses$link[i]
+#   cat(paste0('\n', link))
+#   
+#   #url_bow <- polite::bow(link)
+#   
+#   #c <- url_bow %>% polite::scrape() %>% html_nodes('a') %>% html_attr('href')
+#   c <- link %>% read_html() %>% html_nodes('a') %>% html_attr('href')
+#   c <- c[str_detect(c, 'maps') & !is.na(c)][2]
+#   c <- str_extract(c, '(?<=q=).*') %>% str_split(',')
+#   c_lat <- c[[1]][1] %>% as.numeric()
+#   c_lon <- c[[1]][2] %>% as.numeric()
+#   
+#   gc()
+#   
+#   df <- data.frame(link = link,
+#              latitude = c_lat,
+#              longitude = c_lon) 
+# 
+#   course_geo <- course_geo %>% bind_rows(df)
+#   saveRDS(course_geo, 'course_geo.rds')
+# 
+#       
+#   Sys.sleep(1)
+#   
+# }
 
 #will take 5 days
 #course_geo <- map(courses$link, .f = possibly(get_coords), .progress = T)
-saveRDS(course_geo, 'course_geo.rds')
-course_geo <- course_geo %>% bind_rows()
+#saveRDS(course_geo, 'course_geo.rds')
+# course_geo <- course_geo %>% bind_rows()
 
-courses %>% left_join(course_geo) %>% write_csv('courses_geo.csv')
+course_geo <- readRDS(paste0(here::here(), '/data/course_geo.rds'))
+
+# courses %>% left_join(course_geo) %>% write_csv('courses_geo.csv')
+
+courses <- courses %>% left_join(course_geo) %>% filter(!is.na(course), !is.na(latitude))
+
+```
+
+```{r aggregating county information, message=FALSE, warning=FALSE}
+county_stats <- courses %>% 
+  st_as_sf(coords = c('longitude', 'latitude'), crs = 4326) %>%
+  st_join(counties) %>% 
+  group_by(GEOID) %>% 
+  summarize(dg_n = n()) %>% 
+  st_drop_geometry() %>% 
+  right_join(counties) %>% 
+  mutate(dg_n = replace_na(dg_n, 0) ,dg_nsqm = dg_n / ALAND)
+
+county_stats <- county_stats %>%
+  left_join(trail_df %>% st_drop_geometry()) %>% 
+  rename(hiking_trail_nodes = nodes) %>% 
+  left_join(hazard, by = c('GEOID' = 'STCOFIPS'))
+
+# metrics of interest:
+# dg_n, hiking_trail_odes, min_dist_airport, RISK_SCORE
+# need to nearestneighbors  dg_n, hiking_trail_odes
+
+ 
 ```
 
 
