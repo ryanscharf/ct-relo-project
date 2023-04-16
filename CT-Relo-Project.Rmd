@@ -69,43 +69,6 @@ You can also embed plots, for example:
 
 ```{r get_trails_data}
 
-##  NOTE: commenting out this section -
-##  no need to do the loop again unless you want to update the data or search for different tags (like beaches)
-
-## subset towns and locatins to pull osm data for...
-# data_for_osm <- counties %>% select(STATEFP, GEOID) # %>% st_centroid()
-
-## instead of writing the long form several times below
- # towns <- data_for_osm@data$NAME00
- # lats <- data_for_osm$INTPTLAT00
- # lons <- data_for_osm$INTPTLON00
-
-## create an empty dataframe
- # trail_df <- data.frame(county=NULL, path_node_count=NULL)
-
-## loop through towns and use osm API to get nodes tagged as footway or cycleway
- # for (i in 1:length(towns)) {
-
-  # # set coords & location: from each town center, search ~10 mile radius..
-  # coords <- matrix(
-  #   c(lons[i] - 0., 
-  #     lons[i] + 0.16, 
-  #     lats[i] - 0.16, 
-  #     lats[i] + 0.16), 
-  #   byrow = TRUE, 
-  #   nrow = 2, 
-  #   ncol = 2, 
-  #   dimnames = list(c('x','y'),c('min','max'))
-  #   )
-  # location <- coords %>% opq()
-    
-  # # get trail node data
-  # temp_data <- location %>%
-  #   add_osm_feature(key = "highway",
-  #                   value = c("footway", "cycleway")) %>%
-  #   osmdata_sf()
-
-
 path_count_fn <- function(x) {
   df <- x %>%
     #pluck(1) %>%
@@ -172,40 +135,6 @@ possib_path <- possibly(.f = path_count_fn)
 
 ```{r airports}
 
-# airport_file <- "https://www.partow.net/downloads/GlobalAirportDatabase.zip"
-# zp_f <- tempfile(fileext = '.zip')
-# download.file(airport_file, zp_f, mode = 'wb')
-# 
-# airports <- read_delim(
-#   zp_f,
-#   delim = ":",
-#   escape_double = FALSE,
-#   col_names = FALSE,
-#   col_types = cols(
-#     X6 = col_skip(),
-#     X7 = col_skip(),
-#     X8 = col_skip(),
-#     X9 = col_skip(),
-#     X10 = col_skip(),
-#     X11 = col_skip(),
-#     X12 = col_skip(),
-#     X13 = col_skip(),
-#     X14 = col_integer()
-#   ),
-#   trim_ws = TRUE
-# )
-
-# names(airports) <- c(
-#   'ICAO',
-#   'IATA',
-#   'name',
-#   'city',
-#   'country',
-#   'altitude',
-#   'latitude',
-#   'longitude'
-# )
-
 airports <- read_csv("https://raw.githubusercontent.com/lxndrblz/Airports/main/airports.csv", 
     col_types = cols(time_zone_id = col_skip(), 
         url = col_skip())) %>% 
@@ -220,7 +149,7 @@ airports <- airports %>%
          !str_detect(name, 'AFB|AAF'),
          !is.na(icao))
 
-# there's way too mainy nonpassenger/primary airports in the first list
+# there's way too many nonpassenger/primary airports in the first list
 # we will grab the wikipedia list of airpots, which looks reasonable 
 # and use that to filter the geocoded list
 # 
@@ -252,41 +181,22 @@ trail_df <- trail_df %>%
     min_dist_airport = set_units(min_dist, 'miles')
     )
 
-# # lat/lon major airports around CT
-# lga <- c(-73.8740, 40.7769)
-# jfk <- c(-73.7781, 40.6413)
-# bdl <- c(-72.6860, 41.9389)
-# pvd <- c(-71.4270, 41.7235)
-# bos <- c(-71.0096, 42.3656)
-# 
-# # lat/lon needs to be numeric
-# my_spdf@data$INTPTLAT00 <- as.numeric(my_spdf@data$INTPTLAT00)
-# my_spdf@data$INTPTLON00 <- as.numeric(my_spdf@data$INTPTLON00)
-
-# # for each town (i.e. row of data), use the lowest distance to any airport
-# my_spdf@data$dist_lga <- distHaversine(as.matrix(my_spdf@data[,c("INTPTLON00", "INTPTLAT00")]), lga) * 0.000621371
-# my_spdf@data$dist_jfk <- distHaversine(as.matrix(my_spdf@data[,c("INTPTLON00", "INTPTLAT00")]), jfk) * 0.000621371
-# my_spdf@data$dist_bdl <- distHaversine(as.matrix(my_spdf@data[,c("INTPTLON00", "INTPTLAT00")]), bdl) * 0.000621371
-# my_spdf@data$dist_pvd <- distHaversine(as.matrix(my_spdf@data[,c("INTPTLON00", "INTPTLAT00")]), pvd) * 0.000621371
-# my_spdf@data$dist_bos <- distHaversine(as.matrix(my_spdf@data[,c("INTPTLON00", "INTPTLAT00")]), bos) * 0.000621371
-# my_spdf@data$dist_to_airport <- apply(my_spdf@data[,c("dist_lga", "dist_jfk", "dist_bdl", "dist_pvd", "dist_bos")], 1, FUN = min)
 
 ```
 
 
+## Scrape Disc Golf Courses
 ```{r hunt down disc golf courses} 
-centroid_latlon <- function(x){
-  df <- x %>% st_centroid() %>% st_coordinates()
-  c(df[2], df[1])
-}
+# centroid_latlon <- function(x){
+#   df <- x %>% st_centroid() %>% st_coordinates()
+#   c(df[2], df[1])
+# }
 
 pdga_url <- "https://www.pdga.com/course-directory/advanced?title=&field_course_location_country=US&field_course_location_locality=&field_course_location_administrative_area=All&field_course_location_postal_code=&field_course_type_value=All&rating_value=All&field_course_holes_value=All&field_course_total_length_value=All&field_course_target_type_value=All&field_course_tee_type_value=All&field_location_type_value=All&field_course_camping_value=All&field_course_facilities_value=All&field_course_fees_value=All&field_course_handicap_value=All&field_course_private_value=All&field_course_signage_value=All&field_cart_friendly_value=All&page={page}"
 pdga_base <- 'https://www.pdga.com'
 
 pdga_pages <- 151
 page <- seq(0, pdga_pages, 1) 
-
-# test_page <- "https://www.pdga.com/course-directory/advanced?title=&field_course_location_country=US&field_course_location_locality=&field_course_location_administrative_area=All&field_course_location_postal_code=&field_course_type_value=All&rating_value=All&field_course_holes_value=All&field_course_total_length_value=All&field_course_target_type_value=All&field_course_tee_type_value=All&field_location_type_value=All&field_course_camping_value=All&field_course_facilities_value=All&field_course_fees_value=All&field_course_handicap_value=All&field_course_private_value=All&field_course_signage_value=All&field_cart_friendly_value=All&page=1"
 
 get_courses <- function(p_url, pdga_base = 'https://www.pdga.com'){
   
@@ -308,30 +218,40 @@ data.frame(course = nams,
            link = links_p)
 }
 
-get_coords <- function(link){
+get_coords <- function(link, sleep = 3){
+  cat(paste0('\n', link))
   
-  url_bow <- polite::bow(link)
+  #url_bow <- polite::bow(link)
   
-  c <- url_bow %>% polite::scrape() %>% html_nodes('a') %>% html_attr('href')
+  #c <- url_bow %>% polite::scrape() %>% html_nodes('a') %>% html_attr('href')
+  c <- link %>% read_html() %>% html_nodes('a') %>% html_attr('href')
   c <- c[str_detect(c, 'maps') & !is.na(c)][2]
   c <- str_extract(c, '(?<=q=).*') %>% str_split(',')
   c_lat <- c[[1]][1] %>% as.numeric()
   c_lon <- c[[1]][2] %>% as.numeric()
   
-  data.frame(link = l1,
+  gc()
+  Sys.sleep(sleep)
+  
+  return(
+    data.frame(link = link,
              latitude = c_lat,
              longitude = c_lon)
+  )
+
 }
 
-#takes 25 minutes
-courses <- map_df(glue(pdga_url), get_courses)
-courses %>% write_csv('courses.csv')
+# #takes 25 minutes
+# courses <- map_df(glue(pdga_url), get_courses)
+# courses %>% write_csv('courses.csv')
+courses <- read_csv('courses.csv')
 
 #will take 5 days
-course_geo <- map_df(courses$link, get_coords, .progress = T)
+course_geo <- map(courses$link, .f = possibly(get_coords), .progress = T)
 saveRDS(course_geo, 'course_geo.rds')
+course_geo <- course_geo %>% bind_rows()
 
-coureses %>% left_join(course_geo) %>% write_csv('courses_geo.csv')
+courses %>% left_join(course_geo) %>% write_csv('courses_geo.csv')
 ```
 
 
