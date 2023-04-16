@@ -244,8 +244,8 @@ get_coords <- function(link, sleep = 3){
 
 # #takes 25 minutes
 # courses <- map_df(glue(pdga_url), get_courses)
-# courses %>% write_csv('courses.csv')
-courses <- read_csv('courses.csv')
+# courses %>% filter(!is.na(course)) %>% write_csv('courses.csv')
+courses <- read_csv('courses.csv') %>% filter(!is.na(course))
 
 
 course_geo <- data.frame()
@@ -271,7 +271,8 @@ for(i in 1:length(courses$link)){
              longitude = c_lon) 
 
   course_geo <- course_geo %>% bind_rows(df)
-      
+  saveRDS(course_geo, 'course_geo.rds')
+
       
   Sys.sleep(1)
   
