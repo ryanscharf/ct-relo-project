@@ -186,6 +186,7 @@ trail_df <- trail_df %>%
 
 
 ## Scrape Disc Golf Courses
+
 ```{r hunt down disc golf courses} 
 # centroid_latlon <- function(x){
 #   df <- x %>% st_centroid() %>% st_coordinates()
@@ -246,8 +247,38 @@ get_coords <- function(link, sleep = 3){
 # courses %>% write_csv('courses.csv')
 courses <- read_csv('courses.csv')
 
+
+course_geo <- data.frame()
+
+for(i in 1:length(courses$link)){
+
+  link <- courses$link[i]
+  cat(paste0('\n', link))
+  
+  #url_bow <- polite::bow(link)
+  
+  #c <- url_bow %>% polite::scrape() %>% html_nodes('a') %>% html_attr('href')
+  c <- link %>% read_html() %>% html_nodes('a') %>% html_attr('href')
+  c <- c[str_detect(c, 'maps') & !is.na(c)][2]
+  c <- str_extract(c, '(?<=q=).*') %>% str_split(',')
+  c_lat <- c[[1]][1] %>% as.numeric()
+  c_lon <- c[[1]][2] %>% as.numeric()
+  
+  gc()
+  
+  df <- data.frame(link = link,
+             latitude = c_lat,
+             longitude = c_lon) 
+
+  course_geo <- course_geo %>% bind_rows(df)
+      
+      
+  Sys.sleep(1)
+  
+}
+
 #will take 5 days
-course_geo <- map(courses$link, .f = possibly(get_coords), .progress = T)
+#course_geo <- map(courses$link, .f = possibly(get_coords), .progress = T)
 saveRDS(course_geo, 'course_geo.rds')
 course_geo <- course_geo %>% bind_rows()
 
