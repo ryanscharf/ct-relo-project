@@ -44,7 +44,8 @@ First order is to load disperate data files (including shape files for maps)...
 
 
 
-The [American Community Survey](https://www.census.gov/programs-surveys/acs/about.html) is a survey that goes on every year and collects a ton of demograpic data.  Results are compiled into 1 year, 5 year, and 10 year cohorts.  I'm going to use the ACS to get median home value by county.  I'm going to target the 1-year survey since housing prices have skyrocketed since the start of Covid, but pulling 1 year ACS estimates leaves a lot of empty counties.
+The [American Community Survey](https://www.census.gov/programs-surveys/acs/about.html) is a survey that goes on every year and collects a ton of demograpic data.  Results are compiled into 1 year, 5 year, and 10 year cohorts.  I'm going to use the ACS to get median home value by county.  I'm going to target the 1-year survey since housing prices have skyrocketed since the start of Covid, but pulling 1 year ACS estimates leaves a lot of empty counties. 
+This map has a bunch of gaps and is very close to being a r/PeopleLiveInCities chart
 
 ```{r load_data, message=FALSE, warning=FALSE}
 #filter states to contiguous US
@@ -68,19 +69,15 @@ median_home_value_co <-
   )
 
 
-median_home_value_co %>% left_join(counties, by = 'GEOID') %>% st_sf() %>% 
+median_home_value_co %>% 
+  left_join(counties, by = 'GEOID') %>% 
+  st_sf() %>% 
   ggplot() + geom_sf(aes(fill = estimate)) + scale_fill_viridis_c()
 
 ```
-
+To fill in the missing information, we'll pull ACS 5-year results and get the relative change between survey durations for the counties that exist in the ACS1. From there, we fill in the missing county values with the ACS 5-year values and then adjust it by the geographically nearest ACS1 county's percentage change difference between the two surveys.
 
 ```{r missing home values, message=FALSE, warning=FALSE}
-
-# it turns out a lot of counties are missing from acs1
-# we'll pull acs 5, get the relative change, then fill
-# in the missing acs1 values with the asc5 values
-# then juice it by the nearest % change from values
-# that exist in both 
 
 
 median_home_value_co_5yr <- 
@@ -118,8 +115,15 @@ nearest_acs1 <- st_join(median_home_value_co_5yr %>%
   mutate(estimate = estimate * inc) %>%
   select(GEOID = GEOID.x, estimate, inc)
 
+nearest_acs1 %>% 
+  ggplot() + geom_sf(aes(fill = inc)) + scale_fill_viridis_c()
 
+
+
+#needs toglue data together
 ```
+You easily see the boundaries, in the Great Plains region, of where the groupings for the nearest ACS1 counties exist.  This method for replacing values isn't perfect.  ACS samplings will have a bias toward places with larger populations but the odds are that I wouldn't really be interested in extremely low population areas anyway
+
 
 ## Getting Trails Data
 
