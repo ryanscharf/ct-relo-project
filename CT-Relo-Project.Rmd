@@ -42,7 +42,20 @@ Document to reproduce metrics and visualizations used in this article: http://ww
 
 First order is to load disperate data files (including shape files for maps)...
 
+
+
+The [American Community Survey](https://www.census.gov/programs-surveys/acs/about.html) is a survey that goes on every year and collects a ton of demograpic data.  Results are compiled into 1 year, 5 year, and 10 year cohorts.  I'm going to use the ACS to get median home value by county.  I'm going to target the 1-year survey since housing prices have skyrocketed since the start of Covid, but pulling 1 year ACS estimates leaves a lot of empty counties.
+
 ```{r load_data, message=FALSE, warning=FALSE}
+#filter states to contiguous US
+states <- tigris::states(cb = T ) %>% 
+  filter(!STATEFP %in% c('02', '15', '60', '66', '69', '72', '78')) %>% 
+  st_transform(4326)
+
+counties <- tigris::counties(state = states$STATEFP, cb = T)%>% 
+  st_transform(4326)
+
+
 acs_yr <- 2021
 acs_survey <- 'acs1'
 
@@ -54,13 +67,56 @@ median_home_value_co <-
     survey = acs_survey
   )
 
-#filter states to contiguous US
-states <- tigris::states(cb = T ) %>% 
-  filter(!STATEFP %in% c('02', '15', '60', '66', '69', '72', '78')) %>% 
-  st_transform(4326)
 
-counties <- tigris::counties(state = states$STATEFP, cb = T)%>% 
-  st_transform(4326)
+median_home_value_co %>% left_join(counties, by = 'GEOID') %>% st_sf() %>% 
+  ggplot() + geom_sf(aes(fill = estimate)) + scale_fill_viridis_c()
+
+```
+
+
+```{r missing home values, message=FALSE, warning=FALSE}
+
+# it turns out a lot of counties are missing from acs1
+# we'll pull acs 5, get the relative change, then fill
+# in the missing acs1 values with the asc5 values
+# then juice it by the nearest % change from values
+# that exist in both 
+
+
+median_home_value_co_5yr <- 
+    get_acs(
+    geography = 'county',
+    variables = c('B25077_001'),
+    year = acs_yr,
+    survey = 'acs5'
+  )
+
+mhv <- median_home_value_co %>%
+  right_join(median_home_value_co2, by = 'GEOID') %>% 
+  mutate(inc = estimate.x/estimate.y,
+         diff = estimate.x - estimate.y) %>%
+  select(-NAME.y, 
+         -variable.y, 
+         NAME = NAME.x, 
+         variable = variable.x,
+  ) %>% 
+  left_join(counties, by = 'GEOID') %>% 
+  st_sf()
+ 
+m_miss <- mhv %>% 
+  filter(
+    !is.na(NAME.x)
+    )
+
+nearest_acs1 <- st_join(median_home_value_co_5yr %>% 
+      filter(!GEOID %in% m_miss$GEOID) %>% 
+      left_join(counties, by = 'GEOID') %>% 
+      st_sf(),
+    m_miss, join = st_nearest_feature
+    ) %>% 
+  filter(!is.na(STATEFP.x)) %>%
+  mutate(estimate = estimate * inc) %>%
+  select(GEOID = GEOID.x, estimate, inc)
 
 
 ```
@@ -325,7 +381,7 @@ county_stats <- county_stats %>%
 
 # metrics of interest:
 # dg_n, hiking_trail_odes, min_dist_airport, RISK_SCORE
-# need to nearestneighbors  dg_n, hiking_trail_odes
+# need to nearestneighbors  dg_n, hiking_trail_odes1
 
  
 ```
