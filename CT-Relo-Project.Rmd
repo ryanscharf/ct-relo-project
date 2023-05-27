@@ -34,6 +34,8 @@ library(httr)
 library(polite)
 library(janitor)
 library(units)
+library(stars)
+
 ```
 
 ## Background
@@ -248,6 +250,31 @@ trail_df <- trail_df %>%
 
 
 ```
+
+
+The [UTCI](https://climate-adapt.eea.europa.eu/en/metadata/indicators/thermal-comfort-indices-universal-thermal-climate-index-1979-2019) (Universal Thermal Climate Index) is a standardized index to try to account for a universal human experience of heat which takes into account a large number of variables.  You can check out [Randy Au's post on this](https://counting.substack.com/p/what-goes-into-this-heat-index-thing) if you really a quick overview of it.  
+
+Luckily, there's already a dataset avaliable from the European Union Space Programme's Copernicus Programme.  They use a bunch of satellites to generate tons datasets and make them avaliable for free.  In the case of the UTCI, they provide hourly UTCI rasters from [ERA-5](https://www.ecmwf.int/en/forecasts/dataset/ecmwf-reanalysis-v5). In this case, I didn't know what I was doing, so I grabbed the intermediate dataset.  This dataset contained a netCDF file for each day between September 30th 2019 and May 15th 2023.  Using a short time horizon leaves you very vulnerable to yearly weather variance from things like the El Nino Southern Oscillation. I'd like to use a larger sampling for time, but the archive for this time period was 55gb and took ~8 hrs to process.  I can live with these results and just keep in mind the asterisks around the data.
+
+Each of those files have hourly observations, so I had to aggregate each day into a single metric of how many hours each grid cell had the 'optimal' index.  In the case of the UTCI, the optimal index is something like 50F - 78F.
+
+This is a large range, to me, but I'm not an expert at this data, so I'm quite happy to just take this at face value.  I work with weather data a fair bit for my job, but I've learned that this domain is just niche enough that it can be really hard to find examples and documentation on how to do things. {stars} is a great package for working with spatial/temporal rasters, but there is not a large corpus of examples for people to learn off of. Check out the contents of utci.R if you want to see the details of how this aggregation was done.
+
+```{r comfort index, message = F,  warning = F}
+#source('utci.R')
+
+utci <- readRDS(paste0(here::here(), '/data/utci_daily_good_index.rds'))
+
+utci_a <- utci %>%  
+  aggregate(by = '8 years', FUN = mean, na.rm = T) %>% 
+  aggregate(by = st_geometry(counties), mean, na.rm = T) %>%
+  st_as_sf() %>%
+  rename(average_prime_utci =`2019-01-01`)
+
+#creates a shit load of duplicates
+utci_counties <- counties %>% st_join(utci_a)
+```
+
 
 ```{r hazard}
 # from https://hazards.fema.gov/nri/data-resources
