@@ -91,7 +91,7 @@ median_home_value_co_5yr <-
   )
 
 mhv <- median_home_value_co %>%
-  right_join(median_home_value_co2, by = 'GEOID') %>% 
+  right_join(median_home_value_co_5yr, by = 'GEOID') %>% 
   mutate(inc = estimate.x/estimate.y,
          diff = estimate.x - estimate.y) %>%
   select(-NAME.y, 
@@ -115,16 +115,36 @@ nearest_acs1 <- st_join(median_home_value_co_5yr %>%
     ) %>% 
   filter(!is.na(STATEFP.x)) %>%
   mutate(estimate = estimate * inc) %>%
-  select(GEOID = GEOID.x, estimate, inc)
+  select(GEOID = GEOID.x, estimate, inc) %>% st_drop_geometry()
 
 nearest_acs1 %>% 
-  ggplot() + geom_sf(aes(fill = inc)) + scale_fill_viridis_c()
+  left_join(counties) %>% st_sf() %>%
+    ggplot() +
+    geom_sf(aes(fill = inc)) +
+    scale_fill_viridis_c() +
+  geom_sf(data = states, fill = NA, color = 'black') +
+  ggtitle('Previously Missing Counties with Newly Interpolated ACS Values')
 
 
+mhv <- mhv %>% 
+  left_join(nearest_acs1, by = 'GEOID') %>% 
+  mutate(estimate = case_when(
+    is.na(estimate.x) ~ estimate.y,
+    T ~ estimate.x),
+    inc = case_when(
+      is.na(inc.x)~ inc.y,
+      T ~inc.x
+    )) %>% 
+  select(GEOID, estimate, inc)
 
-#needs toglue data together
+mhv %>% st_sf() %>%
+  ggplot() +
+  geom_sf(aes(fill = estimate)) + 
+  scale_fill_viridis_c() +
+  ggtitle('Completed ACS Estimates Dataset')
 ```
-You easily see the boundaries, in the Great Plains region, of where the groupings for the nearest ACS1 counties exist.  This method for replacing values isn't perfect.  ACS samplings will have a bias toward places with larger populations but the odds are that I wouldn't really be interested in extremely low population areas anyway
+
+You easily see the boundaries, in the Great Plains region, of where the groupings for the nearest ACS1 counties exist.  This method for replacing values isn't perfect.  ACS samplings will have a bias toward places with larger populations but the odds are that I wouldn't really be interested in extremely low population areas anyway.
 
 
 ## Getting Trails Data
@@ -259,6 +279,84 @@ Luckily, there's already a dataset avaliable from the European Union Space Progr
 Each of those files have hourly observations, so I had to aggregate each day into a single metric of how many hours each grid cell had the 'optimal' index.  In the case of the UTCI, the optimal index is something like 50F - 78F.
 
 This is a large range, to me, but I'm not an expert at this data, so I'm quite happy to just take this at face value.  I work with weather data a fair bit for my job, but I've learned that this domain is just niche enough that it can be really hard to find examples and documentation on how to do things. {stars} is a great package for working with spatial/temporal rasters, but there is not a large corpus of examples for people to learn off of. Check out the contents of utci.R if you want to see the details of how this aggregation was done.
+```{r utci data aggregation, message = F, warning = F, eval = F}
+
+categories <- data.frame(
+  stringsAsFactors = FALSE,
+          category = c("Extreme Heat Stress",
+                       "Very Strong Heat Stress","Strong Heat Stress",
+                       "Moderate Heat Stress","No Thermal Stress","Slight Cold Stress",
+                       "Moderate Cold Stress","Strong Cold Stress",
+                       "Very Strong Cold Stress","Extreme Cold Stress"),
+               low = c(46L, 38L, 32L, 26L, 9L, 0L, -13L, -26L, -39L, -274L),
+              high = c(999L, 45L, 37L, 31L, 25L, 8L, -1L, -14L, -27L, -40L)
+)
+
+good_index <- function(x){
+      ifelse(
+        between(x[[1]],0,9),1L,0L
+        )
+}
+
+path <- paste0(here::here(),'/data/dataset-derived-utci-historical.zip')
+files <- unzip(path, list = T)
+files <- files %>% arrange(Name)
+
+#drop first and last files. they're incomplete
+files <- files[c(-1, -nrow(files)), ]
+
+agg_gi <- function(fl, 
+         path = paste0(here::here(),'/data/dataset-derived-utci-historical.zip'),
+         output_file = paste0(here::here(),'utci_daily_good_index.rds')){
+  
+  cat(paste0('\n', fl, '\n'))
+  
+  dir <- tempdir()
+  
+  file <- unzip(path, file = fl, exdir = dir)
+  
+  nc <- read_ncdf(paste(dir, fl, sep = '/'), var = 'utci')
+
+  #convert K to C
+  nc_c <- (nc - 273.15)
+  
+  
+  # crop to continental US
+  nc_c <- st_crop(nc_c,
+                  st_bbox(
+                    c(
+                      xmin = -124.848974,
+                      xmax = -66.885444,
+                      ymax = 49.384358,
+                      ymin = 24.396308
+                    ),
+                    crs = st_crs(4326)
+                    )
+                  )
+  
+  gi <- nc_c %>% aggregate(by = '1 hour', FUN = good_index)
+  gi2 <- gi %>% aggregate(by = '1 day', sum, na.rm = T)
+  
+  gi2 <- aperm(gi2, c(2,3,1))
+  gi2 <- st_set_dimensions(gi2, 3, 
+                           values = 
+                             lubridate::ymd(st_get_dimension_values(gi2, 'time')))
+  st_crs(gi2) <- st_crs(4326)
+  
+  if(file.exists(output_file)){
+    of <- readRDS(output_file)
+    c(of,gi2, along = 3) %>%
+      saveRDS(output_file)
+  } else {
+    saveRDS(gi2, output_file)
+  }
+}
+
+purrr::walk(files$Name, agg_gi, .progress = T)
+
+```
+
+
 
 ```{r comfort index, message = F,  warning = F}
 #source('utci.R')
@@ -271,8 +369,33 @@ utci_a <- utci %>%
   st_as_sf() %>%
   rename(average_prime_utci =`2019-01-01`)
 
-#creates a shit load of duplicates
-utci_counties <- counties %>% st_join(utci_a)
+utci_counties <- counties %>% st_join(utci_a, join = st_covers)
+
+# 126 NAs need to be filled in 
+# we'll just do a NN fill again
+
+
+utci_miss <- utci_counties %>% 
+  filter(
+    !is.na(average_prime_utci)
+    )
+
+nearest_utci <- utci_counties %>%
+  filter(!GEOID %in% utci_miss$GEOID) %>%
+  st_join(utci_miss, join = st_nearest_feature) %>%
+  filter(!is.na(STATEFP.x)) %>%
+  select(GEOID = GEOID.x, average_prime_utci = average_prime_utci.y) %>%
+  st_drop_geometry()
+
+utci_counties <- utci_counties %>% 
+  left_join(nearest_utci, by = 'GEOID') %>% 
+  mutate(average_prime_utci = case_when(
+    is.na(average_prime_utci.x) ~ average_prime_utci.y,
+    T ~ average_prime_utci.x)) %>% 
+  select(-average_prime_utci.x, -average_prime_utci.y)
+
+utci_counties %>% select(average_prime_utci) %>%
+  plot(breaks = 'quantile')
 ```
 
 
