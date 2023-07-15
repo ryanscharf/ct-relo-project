@@ -207,7 +207,24 @@ possib_path <- possibly(.f = path_count_fn)
    
   nodes_df <- read_csv(paste0(here::here(), '/data/county_node_count.csv'))
   
+  
+  
+  
   trail_df <- counties %>% left_join(nodes_df, by = 'GEOID')
+  
+  trail_df <- trail_df %>%
+  mutate(nodes = replace_na(nodes, 0)) %>% 
+    filter(!is.na(GEOID)) %>%
+    mutate(
+        nb = st_contiguity(geometry) %>% include_self(), 
+        neighbor_nodes = st_nb_apply(
+          nodes, 
+          nb, 
+          NA, 
+          .f  = function(.xij,...) sum(.xij))
+        ) %>% 
+    st_sf() %>%
+  select(-nb) 
 
  # print(head(trail_df))
 
@@ -223,7 +240,7 @@ airports <- read_csv("https://raw.githubusercontent.com/lxndrblz/Airports/main/a
     col_types = cols(time_zone_id = col_skip(), 
         url = col_skip())) %>% 
   rename(geometry = location) %>% 
-  st_as_sf(wkt = 'geometry', crs = 4326)
+  st_as_sf(wkt = 'geometry', crs = 4269)
   
 
 airports <- airports %>% 
@@ -261,7 +278,7 @@ distances <- st_distance(counties, airports)
 min_dist <- do.call(pmin, as.data.frame(distances))
 max_dist <- do.call(pmax, as.data.frame(distances))
 
-
+#adding distances as new columns
 trail_df <- trail_df %>% 
   mutate(
     min_dist_airport = set_units(min_dist, 'miles'),
@@ -279,6 +296,7 @@ Luckily, there's already a dataset avaliable from the European Union Space Progr
 Each of those files have hourly observations, so I had to aggregate each day into a single metric of how many hours each grid cell had the 'optimal' index.  In the case of the UTCI, the optimal index is something like 50F - 78F.
 
 This is a large range, to me, but I'm not an expert at this data, so I'm quite happy to just take this at face value.  I work with weather data a fair bit for my job, but I've learned that this domain is just niche enough that it can be really hard to find examples and documentation on how to do things. {stars} is a great package for working with spatial/temporal rasters, but there is not a large corpus of examples for people to learn off of. Check out the contents of utci.R if you want to see the details of how this aggregation was done.
+
 ```{r utci data aggregation, message = F, warning = F, eval = F}
 
 categories <- data.frame(
@@ -362,6 +380,7 @@ purrr::walk(files$Name, agg_gi, .progress = T)
 #source('utci.R')
 
 utci <- readRDS(paste0(here::here(), '/data/utci_daily_good_index.rds'))
+utci <- st_transform(utci, 4269)
 
 utci_a <- utci %>%  
   aggregate(by = '8 years', FUN = mean, na.rm = T) %>% 
@@ -396,6 +415,9 @@ utci_counties <- utci_counties %>%
 
 utci_counties %>% select(average_prime_utci) %>%
   plot(breaks = 'quantile')
+
+#add to trailsdf
+trail_df <- trail_df %>% left_join(st_drop_geometry(utci_counties))
 ```
 
 
@@ -514,30 +536,52 @@ course_geo <- readRDS(paste0(here::here(), '/data/course_geo.rds'))
 
 # courses %>% left_join(course_geo) %>% write_csv('courses_geo.csv')
 
-courses <- courses %>% left_join(course_geo) %>% filter(!is.na(course), !is.na(latitude))
+courses_sf <- courses %>% 
+  left_join(course_geo) %>% 
+  filter(!is.na(course), !is.na(latitude)) %>%
+  st_as_sf(coords = c('longitude', 'latitude'), crs = 4269) 
 
+library(sfdep)
+dg_counties <- courses_sf %>%
+  st_join(counties) %>% 
+  group_by(GEOID) %>%
+  summarize(n_dg = n()) %>% 
+  st_drop_geometry() %>%
+  left_join(counties)
+
+
+dg_counties <- dg_counties %>%
+  mutate(n_dg = replace_na(n_dg, 0)) %>% 
+    filter(!is.na(GEOID)) %>%
+    mutate(
+        nb = st_contiguity(geometry) %>% include_self(), 
+        neighbor_dg = st_nb_apply(
+          n_dg, 
+          nb, 
+          NA, 
+          .f  = function(.xij,...) sum(.xij))
+        ) %>% 
+  select(GEOID, neighbor_dg, n_dg) 
+
+#add nn
+
+trail_df <- trail_df %>% left_join(dg_counties)
 ```
 
-```{r aggregating county information, message=FALSE, warning=FALSE}
-county_stats <- courses %>% 
-  st_as_sf(coords = c('longitude', 'latitude'), crs = 4326) %>%
-  st_join(counties) %>% 
-  group_by(GEOID) %>% 
-  summarize(dg_n = n()) %>% 
-  st_drop_geometry() %>% 
-  right_join(counties) %>% 
-  mutate(dg_n = replace_na(dg_n, 0) ,dg_nsqm = dg_n / ALAND)
 
-county_stats <- county_stats %>%
-  left_join(trail_df %>% st_drop_geometry()) %>% 
+```{r aggregating county information, message=FALSE, warning=FALSE}
+
+
+county_stats <- trail_df %>%
   rename(hiking_trail_nodes = nodes) %>% 
-  left_join(hazard, by = c('GEOID' = 'STCOFIPS'))
+  left_join(hazard, by = c('GEOID' = 'STCOFIPS')) %>%
+  left_join(st_drop_geometry(mhv))
 
 # metrics of interest:
-# dg_n, hiking_trail_odes, min_dist_airport, RISK_SCORE
-# need to nearestneighbors  dg_n, hiking_trail_odes1
+# neighbor_nodes, min_dist_airport, average_prime_utci, neighbor_dg,
+# RISK_SCORE, mhv
 
- 
+ saveRDS(county_stats, 'county_stats.rds')
 ```
 
 
