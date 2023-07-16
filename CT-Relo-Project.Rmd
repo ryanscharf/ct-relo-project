@@ -613,7 +613,9 @@ cs <- county_stats %>%
     average_prime_utci_percentile, 
     neighbor_dg_percentile, 
     RISK_SCORE_percentile, 
-    estimate_percentile)
+    estimate_percentile) %>% 
+  mutate(RISK_SCORE_percentile = abs(1-RISK_SCORE_percentile))
+
 
  saveRDS(cs, 'county_stats.rds')
 ```
