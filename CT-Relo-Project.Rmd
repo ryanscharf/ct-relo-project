@@ -35,6 +35,8 @@ library(polite)
 library(janitor)
 library(units)
 library(stars)
+library(sfdep)
+
 
 ```
 
@@ -541,13 +543,12 @@ courses_sf <- courses %>%
   filter(!is.na(course), !is.na(latitude)) %>%
   st_as_sf(coords = c('longitude', 'latitude'), crs = 4269) 
 
-library(sfdep)
 dg_counties <- courses_sf %>%
   st_join(counties) %>% 
   group_by(GEOID) %>%
   summarize(n_dg = n()) %>% 
   st_drop_geometry() %>%
-  left_join(counties)
+  full_join(counties)
 
 
 dg_counties <- dg_counties %>%
@@ -559,13 +560,13 @@ dg_counties <- dg_counties %>%
           n_dg, 
           nb, 
           NA, 
-          .f  = function(.xij,...) sum(.xij))
+          .f  = function(.xij,...) sum(.xij, na.rm = T))
         ) %>% 
   select(GEOID, neighbor_dg, n_dg) 
 
 #add nn
 
-trail_df <- trail_df %>% left_join(dg_counties)
+trail_df <- trail_df %>% left_join(dg_counties, by = 'GEOID')
 ```
 
 
@@ -579,9 +580,42 @@ county_stats <- trail_df %>%
 
 # metrics of interest:
 # neighbor_nodes, min_dist_airport, average_prime_utci, neighbor_dg,
-# RISK_SCORE, mhv
+# RISK_SCORE, estimate
 
- saveRDS(county_stats, 'county_stats.rds')
+cs <- county_stats %>% 
+  mutate(
+    across(c(
+    neighbor_nodes, 
+    min_dist_airport, 
+    average_prime_utci, 
+    neighbor_dg, 
+    RISK_SCORE, 
+    estimate),
+    percent_rank,
+    .names = '{.col}_percentile')
+    ) %>% 
+  select(
+    NAME,
+    NAMELSAD,
+    GEOID,
+    STUSPS,
+    STATE_NAME,
+    ALAND,
+    neighbor_nodes, 
+    min_dist_airport, 
+    average_prime_utci, 
+    neighbor_dg, 
+    RISK_SCORE, 
+    RISK_RATNG,
+    estimate,
+    neighbor_nodes_percentile, 
+    min_dist_airport_percentile, 
+    average_prime_utci_percentile, 
+    neighbor_dg_percentile, 
+    RISK_SCORE_percentile, 
+    estimate_percentile)
+
+ saveRDS(cs, 'county_stats.rds')
 ```
 
 
