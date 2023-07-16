@@ -4,6 +4,7 @@ library(tidyverse)
 library(sf)
 library(leaflet)
 library(DT)
+library(leafgl)
 
 # scorer <- function(
 #                    mhvp = median_home_value_percentile,
@@ -86,7 +87,7 @@ ui <- fluidPage(
 
         # Show a plot of the generated distribution
         mainPanel(
-           leafletOutput('map'),
+           leafglOutput('map'),
            dataTableOutput('tbl')
         )
     )
@@ -120,7 +121,7 @@ server <- function(input, output) {
       #pal <- colorQuantile('magma', NULL, n = 5)
       pal <- colorBin("magma", bins = c(0,.5,.75,.90,.95,1), na.color = 'grey')
       
-      m <- mapdf()
+      m <- mapdf() %>% st_cast('POLYGON')
       popup = paste0( "County: "
                       , m$namelsad, ', ', m$stusps,
                       "<br>Score: ", round(m$score, 0 ), '(', round(m$score_percentile, 2), ')',
@@ -129,16 +130,19 @@ server <- function(input, output) {
                       
                     )
       
-      leaflet(m) %>%
+      leaflet() %>%
         addProviderTiles("OpenStreetMap", layerId = "osm") %>%
-        addPolygons(
-        fillColor = ~pal(score_percentile),
-        fillOpacity = .7,
-        stroke = F,
-        popup = popup
+        addGlPolygons(
+          data = m,
+          fillColor = ~pal(score_percentile),
+          fillOpacity = .9,
+          stroke = F,
+          popup = popup
         ) %>%
         addLegend(position = 'bottomright', pal = pal, 
-                     values = m$score, title = 'Score')
+                     values = m$score, title = 'Score',
+                  opacity = 1
+        )
       
     })
     
