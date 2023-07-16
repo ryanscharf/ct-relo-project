@@ -1,0 +1,13 @@
+name: RelocateR
+title: RelocateR
+username:
+account: ryanscharf
+server: shinyapps.io
+hostUrl: https://api.shinyapps.io/v1
+appId: 9464099
+bundleId: 7463052
+url: https://ryanscharf.shinyapps.io/RelocateR/
+when: 1689537063.02445
+lastSyncTime: 1689537063.02446
+asMultiple: FALSE
+asStatic: FALSE

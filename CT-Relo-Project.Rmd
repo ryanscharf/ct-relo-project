@@ -614,10 +614,12 @@ cs <- county_stats %>%
     neighbor_dg_percentile, 
     RISK_SCORE_percentile, 
     estimate_percentile) %>% 
-  mutate(RISK_SCORE_percentile = abs(1-RISK_SCORE_percentile))
+  mutate(RISK_SCORE_percentile = abs(1-RISK_SCORE_percentile),
+         min_dist_airport_percentile = abs(1-min_dist_airport_percentile),
+         estimate_percentile = abs(1-estimate_percentile))
 
 
- saveRDS(cs, 'county_stats.rds')
+ saveRDS(cs, paste0(here::here(), '/data/county_stats.rds'))
 ```
 
 
