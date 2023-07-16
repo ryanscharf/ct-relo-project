@@ -132,12 +132,14 @@ server <- function(input, output) {
       
       leaflet() %>%
         addProviderTiles("OpenStreetMap", layerId = "osm") %>%
+        removeGlPolygons(layerId = 'polys') %>%
         addGlPolygons(
           data = m,
           fillColor = ~pal(score_percentile),
           fillOpacity = .9,
           stroke = F,
-          popup = popup
+          popup = popup,
+          layerID = 'polys'
         ) %>%
         addLegend(position = 'bottomright', pal = pal, 
                      values = m$score, title = 'Score',
