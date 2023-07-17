@@ -429,6 +429,7 @@ trail_df <- trail_df %>% left_join(st_drop_geometry(utci_counties))
 # SOVI social vulnerability 
 # EAL expected annual loss
 # https://www.ncei.noaa.gov/access/billions/mapping
+# https://www.fema.gov/sites/default/files/documents/fema_national-risk-index_technical-documentation.pdf
 
 hazard <- read_csv(paste0(here::here(), '/data/NRI_Table_Counties.csv')) %>% 
   filter(STCOFIPS %in% counties$GEOID)
