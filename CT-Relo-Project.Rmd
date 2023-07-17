@@ -287,6 +287,9 @@ trail_df <- trail_df %>%
     max_dist_airport = set_units(max_dist, 'miles')
     )
 
+ tm_shape(counties) + tm_borders(col = 'grey') + 
+   tm_shape(states) + tm_borders() + 
+   tm_shape(airports) + tm_dots(col = 'red', size = .1)
 
 ```
 
