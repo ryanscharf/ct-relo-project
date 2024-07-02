@@ -5,6 +5,9 @@ library(sf)
 library(leaflet)
 library(DT)
 library(leafgl)
+library(tigris)
+library(bslib)
+
 
 # scorer <- function(
 #                    mhvp = median_home_value_percentile,
@@ -36,15 +39,31 @@ cs <- readRDS(paste0(here::here(), '/data/county_stats.rds')) %>%
          hiking_nodes_percentile = neighbor_nodes_percentile) %>%
   mutate(score = 0)
 
+pres_res <- read_csv('https://raw.githubusercontent.com/fivethirtyeight/election-results/main/election_results_presidential.csv')
+pres_res <- pres_res %>% 
+  filter(cycle == '2020', stage == 'general') %>% 
+  group_by(state_abbrev) %>% 
+  filter(votes == max(votes)) %>% 
+  select(state_abbrev, ballot_party)
+
+st <- tigris::states(cb = T) %>% filter(!STATEFP  %in% c(60, 02, 66, 69, 78, 72, 15))
+p_boundaries <- st %>% left_join(pres_res, by = c('STUSPS' = 'state_abbrev')) %>% 
+  mutate(color = if_else(ballot_party == 'DEM', 'blue', 'red'))
+
+cs <- cs %>% left_join(pres_res, by = c('stusps' = 'state_abbrev')) %>% 
+  mutate(blue_state = if_else(ballot_party == 'DEM', 1, 0)) %>%
+  select(-ballot_party)
+
 # Define UI for application that draws a histogram
-ui <- fluidPage(
+ui <- page_sidebar(
 
     # Application title
     # titlePanel("Old Faithful Geyser Data"),
 
     # Sidebar with a slider input for number of bins 
-    sidebarLayout(
-        sidebarPanel(
+    #sidebarLayout(
+        sidebar = sidebar(
+          #sidebarPanel(
           
           sliderInput("home_price_filter",
                       "Home Prices:",
@@ -81,16 +100,30 @@ ui <- fluidPage(
                         "Disc Golf Weight:",
                         min = 1,
                         max = 100,
-                        value = 60)
-            
+                        value = 60),
+          checkboxInput('blue_state',
+                        'Blue State',
+                        T),
+          checkboxInput('filter_reds',
+                        'Filter Red States',
+                        T)
         ),
 
         # Show a plot of the generated distribution
-        mainPanel(
+        #mainPanel(
            leafglOutput('map'),
-           dataTableOutput('tbl')
-        )
-    )
+           accordion(open = F,
+                     # accordion_panel(
+                     #   'Map',
+                     #   leafglOutput('map'),
+                     # ),
+                     accordion_panel(
+                     'Table',
+                     dataTableOutput('tbl')
+                     )
+           )
+        #)
+    #)
 )
 
 # Define server logic required to draw a histogram
@@ -100,19 +133,35 @@ server <- function(input, output) {
   
   mapdf <- reactive({
     
-    cs$score <-  
+    cs$score <-  (
      cs$median_home_value_percentile * input$median_home_weight +
      cs$hiking_nodes_percentile * input$hiking_nodes_weight +
      cs$risk_score_percentile * input$risk_score_weight +
      cs$average_prime_utci_percentile * input$average_prime_utci_weight +
      cs$min_dist_airport_percentile * input$min_dist_airport_weight  +
-     cs$neighbor_dg_percentile * input$neighbor_dg_weight
+     cs$neighbor_dg_percentile * input$neighbor_dg_weight) *
+      if(input$blue_state == T){
+        cs$blue_state
+      } else { 1 }
+    
+    
+    if(input$filter_reds == T){
+      cs %>% 
+        filter(blue_state == 1) %>% 
+        mutate(
+        score = if_else(
+          between(median_home_value, input$home_price_filter[1], input$home_price_filter[2]), score, 0),
+        score_percentile = percent_rank(score)
+      ) %>% st_sf()
+      
+    } else {
     
     cs %>% mutate(
       score = if_else(
         between(median_home_value, input$home_price_filter[1], input$home_price_filter[2]), score, 0),
       score_percentile = percent_rank(score)
       ) %>% st_sf()
+    }
   })
   
   
@@ -141,8 +190,18 @@ server <- function(input, output) {
           popup = popup,
           layerID = 'polys'
         ) %>%
-        addLegend(position = 'bottomright', pal = pal, 
-                     values = m$score, title = 'Score',
+        # {if (input$blue_state == T) {
+        # addPolylines(data = p_boundaries %>% st_cast('POLYGON') %>% st_cast('LINESTRING'),
+        #               color = ~color,
+        #               fillOpacity = 0,
+        #               stroke = T,
+        #               weight = .8)
+        # } else  {.} }%>%
+        addLegend(map = .,
+                  position = 'bottomright', 
+                  pal = pal, 
+                  values = m$score, 
+                  title = 'Score',
                   opacity = 1
         )
       
