@@ -37,7 +37,8 @@ cs <- readRDS(paste0(here::here(), '/data/county_stats.rds')) %>%
          median_home_value_percentile = estimate_percentile,
          hiking_nodes = neighbor_nodes,
          hiking_nodes_percentile = neighbor_nodes_percentile) %>%
-  mutate(score = 0)
+  mutate(score = 0,
+         risk_score_percentile = 1-risk_score_percentile) #this is inversed somehow
 
 pres_res <- read_csv('https://raw.githubusercontent.com/fivethirtyeight/election-results/main/election_results_presidential.csv')
 pres_res <- pres_res %>% 
